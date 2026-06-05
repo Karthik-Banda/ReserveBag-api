@@ -1,62 +1,65 @@
-﻿using Microsoft.Extensions.Hosting;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using ReserveBag.Data;
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using ReserveBag.Data;
 
 namespace ReserveBag.Services
 {
     public class ReservationCleanupService : BackgroundService
     {
-        private readonly IServiceProvider _serviceProvider;
+        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILogger<ReservationCleanupService> _logger;
 
-        public ReservationCleanupService(IServiceProvider serviceProvider)
+        // Inject the ScopeFactory instead of the DbContext directly
+        public ReservationCleanupService(IServiceScopeFactory scopeFactory, ILogger<ReservationCleanupService> logger)
         {
-            _serviceProvider = serviceProvider;
+            _scopeFactory = scopeFactory;
+            _logger = logger;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _logger.LogInformation ("Reservation Cleanup Service is starting.");
+
+            // Keep running until the application shuts down
             while ( !stoppingToken.IsCancellationRequested )
             {
-                using ( var scope = _serviceProvider.CreateScope () )
+                try
                 {
-                    var dbContext = scope.ServiceProvider.GetRequiredService<StoreDbContext> ();
-
-                    // Find all pending reservations older than 48 hours
-                    var expiredDate = DateTime.UtcNow.AddHours (-48);
-
-                    var expiredReservations = await dbContext.Reservations
-                        .Include (r => r.Items)
-                        .ThenInclude (i => i.Variant)
-                        .Where (r => r.Status == "Pending" && r.CreatedAt < expiredDate)
-                        .ToListAsync (stoppingToken);
-
-                    foreach ( var reservation in expiredReservations )
+                    // Create a fresh scope for the database context
+                    using ( var scope = _scopeFactory.CreateScope () )
                     {
-                        // 1. Mark as expired
-                        reservation.Status = "Expired";
+                        var dbContext = scope.ServiceProvider.GetRequiredService<StoreDbContext> ();
 
-                        // 2. Restore the stock quantities
-                        foreach ( var item in reservation.Items )
+                        // Find all pending reservations that have passed their expiration date
+                        var expiredReservations = await dbContext.Reservations
+                            .Where (r => r.Status == "Pending" && r.ExpiresAt <= DateTime.UtcNow)
+                            .ToListAsync (stoppingToken);
+
+                        if ( expiredReservations.Any () )
                         {
-                            if ( item.Variant != null )
+                            foreach ( var reservation in expiredReservations )
                             {
-                                item.Variant.StockQuantity += item.Quantity;
+                                reservation.Status = "Cancelled";
                             }
+
+                            await dbContext.SaveChangesAsync (stoppingToken);
+                            _logger.LogInformation ($"Successfully cancelled {expiredReservations.Count} expired reservations.");
                         }
                     }
-
-                    if ( expiredReservations.Any () )
-                    {
-                        await dbContext.SaveChangesAsync (stoppingToken);
-                    }
+                }
+                catch ( Exception ex )
+                {
+                    // Catch the error and log it so it DOES NOT crash the entire application!
+                    _logger.LogError (ex, "An error occurred while cleaning up reservations. Retrying next cycle.");
                 }
 
-                // Wait 1 hour before checking again
+                // Wait for 1 hour before checking the database again
                 await Task.Delay (TimeSpan.FromHours (1), stoppingToken);
             }
         }

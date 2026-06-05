@@ -16,6 +16,10 @@ builder.Services.AddControllers ().AddJsonOptions (options =>
 }); builder.Services.AddEndpointsApiExplorer ();
 builder.Services.AddSwaggerGen ();
 
+// --- ADD MEMORY CACHE & SMS SERVICE HERE ---
+builder.Services.AddMemoryCache ();
+builder.Services.AddTransient<ReserveBag.Services.ISmsService, ReserveBag.Services.TwilioSmsService> ();
+
 // 1. Database Connection
 builder.Services.AddDbContext<StoreDbContext> (options =>
     options.UseNpgsql (builder.Configuration.GetConnectionString ("DefaultConnection")));
@@ -25,7 +29,7 @@ builder.Services.AddCors (options =>
     options.AddPolicy ("AllowReactApp",
         policy =>
         {
-            policy.AllowAnyOrigin()   
+            policy.WithOrigins ("http://localhost:5173")
                   .AllowAnyHeader ()
                   .AllowAnyMethod ();
         });
@@ -60,6 +64,7 @@ if ( app.Environment.IsDevelopment () )
     app.UseSwagger ();
     app.UseSwaggerUI ();
 }
+
 
 app.UseHttpsRedirection ();
 
