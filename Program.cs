@@ -15,6 +15,11 @@ builder.Services.AddControllers ().AddJsonOptions (options =>
     options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
 }); builder.Services.AddEndpointsApiExplorer ();
 builder.Services.AddSwaggerGen ();
+// Tells .NET to enable temporary memory storage for the 6-digit OTP codes
+builder.Services.AddMemoryCache ();
+
+// Tells .NET to give the TwilioSmsService to the OtpController whenever it asks for ISmsService
+builder.Services.AddTransient<ReserveBag.Services.ISmsService, ReserveBag.Services.TwilioSmsService> ();
 
 
 // 1. Database Connection
